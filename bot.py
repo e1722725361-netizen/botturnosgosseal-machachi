@@ -1,7 +1,6 @@
 import os
 import json
 import logging
-import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timedelta
@@ -25,7 +24,6 @@ PORT = int(os.environ.get("PORT", 8080))
 TZ = pytz.timezone("America/Guayaquil")
 DATA_FILE = "data.json"
 
-# ── Equipo ─────────────────────────────────────────────────────────────────────
 BASE_MEMBERS = [
     "LUIS PILACUAN",
     "JOSE ALLAICA",
@@ -33,20 +31,17 @@ BASE_MEMBERS = [
     "LUIS CELLRE",
 ]
 
-# Semana 0 = sábado 13 junio 2026 → JOSE ALLAICA libre
 WEEK_ZERO = datetime(2026, 6, 13, tzinfo=TZ)
 
 
-# ── Servidor HTTP mínimo (Render necesita un puerto abierto) ───────────────────
+# ── Servidor HTTP mínimo ───────────────────────────────────────────────────────
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot Turnos Gosseal Machachi - OK")
-
     def log_message(self, format, *args):
         pass
-
 
 def run_http_server():
     server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
@@ -61,7 +56,6 @@ def load_data() -> dict:
             return json.load(f)
     return {"vacations": {}}
 
-
 def save_data(data: dict):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -71,36 +65,25 @@ def save_data(data: dict):
 def get_week_number(ref: datetime = None) -> int:
     if ref is None:
         ref = datetime.now(TZ)
-    delta = ref - WEEK_ZERO
-    return max(0, delta.days // 7)
-
+    return max(0, (ref - WEEK_ZERO).days // 7)
 
 def get_free_index(week: int) -> int:
     return (week + 1) % len(BASE_MEMBERS)
 
-
 def week_start_date(week: int) -> datetime:
     return WEEK_ZERO + timedelta(weeks=week)
 
-
 def get_schedule(week: int, data: dict) -> dict:
     now = datetime.now(TZ)
-    free_idx = get_free_index(week)
-    free_base = BASE_MEMBERS[free_idx]
-    on_duty_base = [m for m in BASE_MEMBERS if m != free_base]
-
-    on_vacation = []
-    for member in BASE_MEMBERS:
-        key = member.replace(" ", "_")
-        if key in data.get("vacations", {}):
-            retorno = datetime.fromisoformat(data["vacations"][key])
-            if retorno > now:
-                on_vacation.append(member)
-
-    on_duty = [m for m in on_duty_base if m not in on_vacation]
+    free_base = BASE_MEMBERS[get_free_index(week)]
+    on_vacation = [
+        m for m in BASE_MEMBERS
+        if m.replace(" ", "_") in data.get("vacations", {})
+        and datetime.fromisoformat(data["vacations"][m.replace(" ", "_")]) > now
+    ]
+    on_duty = [m for m in BASE_MEMBERS if m != free_base and m not in on_vacation]
     free = [free_base] + [m for m in on_vacation if m != free_base]
     return {"on_duty": on_duty, "free": free}
-
 
 def build_reminder(week: int, data: dict) -> str:
     sched = get_schedule(week, data)
@@ -109,13 +92,12 @@ def build_reminder(week: int, data: dict) -> str:
     turno_str = "\n".join(f"  ✅ {m}" for m in sched["on_duty"]) or "  (sin asignar)"
     libre_str = "\n".join(f"  🟡 {m}" for m in sched["free"]) or "  (ninguno)"
     return (
-        f"🔔 *RECORDATORIO DE TURNO — Semana #{week}*\n"
+        f"🔔 *RECORDATORIO DE TURNO — Semana \#{week}*\n"
         f"📅 *Sábado {sat.strftime('%d/%m/%Y')} y Domingo {sun.strftime('%d/%m/%Y')}*\n\n"
         f"*🔧 DE TURNO:*\n{turno_str}\n\n"
         f"*🟡 LIBRE este fin de semana:*\n{libre_str}\n\n"
         f"_Gosseal Machachi_ 💼"
     )
-
 
 def find_member(user) -> str | None:
     full = (user.full_name or "").upper()
@@ -143,18 +125,13 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-
 async def cmd_turno(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = load_data()
-    week = get_week_number()
-    await update.message.reply_text(build_reminder(week, data), parse_mode="Markdown")
-
+    await update.message.reply_text(build_reminder(get_week_number(), data), parse_mode="Markdown")
 
 async def cmd_siguiente(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = load_data()
-    week = get_week_number() + 1
-    await update.message.reply_text(build_reminder(week, data), parse_mode="Markdown")
-
+    await update.message.reply_text(build_reminder(get_week_number() + 1, data), parse_mode="Markdown")
 
 async def cmd_calendario(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = load_data()
@@ -165,16 +142,13 @@ async def cmd_calendario(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         sched = get_schedule(w, data)
         sat = week_start_date(w)
         sun = sat + timedelta(days=1)
-        turno = ", ".join(sched["on_duty"]) or "sin asignar"
-        libre = ", ".join(sched["free"]) or "ninguno"
         hoy = " ← *ESTE FIN DE SEMANA*" if i == 0 else ""
         lines.append(
-            f"*Sem #{w}* — Sáb {sat.strftime('%d/%m')} / Dom {sun.strftime('%d/%m')}{hoy}\n"
-            f"  🔧 {turno}\n"
-            f"  🟡 Libre: {libre}"
+            f"*Sem \#{w}* — Sáb {sat.strftime('%d/%m')} / Dom {sun.strftime('%d/%m')}{hoy}\n"
+            f"  🔧 {', '.join(sched['on_duty']) or 'sin asignar'}\n"
+            f"  🟡 Libre: {', '.join(sched['free']) or 'ninguno'}"
         )
     await update.message.reply_text("\n\n".join(lines), parse_mode="Markdown")
-
 
 async def cmd_estado(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = load_data()
@@ -188,12 +162,8 @@ async def cmd_estado(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for key, iso in activos.items():
         retorno = datetime.fromisoformat(iso)
         dias = (retorno - now).days + 1
-        lines.append(
-            f"  • *{key.replace('_', ' ')}*\n"
-            f"    Regresa: {retorno.strftime('%d/%m/%Y')} (en {dias} día/s)"
-        )
+        lines.append(f"  • *{key.replace('_', ' ')}*\n    Regresa: {retorno.strftime('%d/%m/%Y')} (en {dias} día/s)")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-
 
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.lower().strip()
@@ -207,47 +177,41 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         return
-    dias_pedidos = int(match.group(1))
-    dias_fuera = dias_pedidos + 1
+    dias_fuera = int(match.group(1)) + 1
     member = find_member(update.effective_user)
     if not member:
-        await update.message.reply_text(
-            "⚠️ No puedo identificarte. Asegúrate de que tu nombre en Telegram "
-            "coincida con el del equipo."
-        )
+        await update.message.reply_text("⚠️ No puedo identificarte.")
         return
     data = load_data()
-    now = datetime.now(TZ)
-    retorno = now + timedelta(days=dias_fuera)
-    key = member.replace(" ", "_")
-    data["vacations"][key] = retorno.isoformat()
+    retorno = datetime.now(TZ) + timedelta(days=dias_fuera)
+    data["vacations"][member.replace(" ", "_")] = retorno.isoformat()
     save_data(data)
     await update.message.reply_text(
         f"✅ *{member}* quedas suspendido por *{dias_fuera} días*.\n"
-        f"📅 Te reincorporas el *{retorno.strftime('%d/%m/%Y')}*.\n\n"
-        f"Solo sábados y domingos cuentan como turno. ¡Descansa! 🏖",
+        f"📅 Te reincorporas el *{retorno.strftime('%d/%m/%Y')}*. ¡Descansa! 🏖",
         parse_mode="Markdown"
     )
-
 
 async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
     if not CHAT_ID:
         return
     data = load_data()
-    week = get_week_number()
     await context.bot.send_message(
         chat_id=CHAT_ID,
-        text=build_reminder(week, data),
+        text=build_reminder(get_week_number(), data),
         parse_mode="Markdown"
     )
-    logger.info("Recordatorio enviado — semana #%s", week)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-async def run_bot():
+def main():
     if not TOKEN:
         raise ValueError("Falta BOT_TOKEN en variables de entorno")
 
+    # HTTP server en hilo separado
+    threading.Thread(target=run_http_server, daemon=True).start()
+
+    # Bot con su propio event loop interno (forma correcta para PTB 21+)
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
@@ -263,18 +227,7 @@ async def run_bot():
         jq.run_daily(send_reminder, time=t, days=(4,), name=f"reminder_{hour}h")
 
     logger.info("Bot corriendo...")
-    await app.run_polling(drop_pending_updates=True)
-
-
-def main():
-    # Servidor HTTP en hilo separado
-    http_thread = threading.Thread(target=run_http_server, daemon=True)
-    http_thread.start()
-
-    # Crear event loop explícito (compatible con Python 3.11+)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(run_bot())
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
