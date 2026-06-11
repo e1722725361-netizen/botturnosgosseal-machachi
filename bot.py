@@ -2,10 +2,12 @@ import os
 import json
 import logging
 import threading
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timedelta
 import pytz
 import re
+import urllib.request
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -21,6 +23,7 @@ logger = logging.getLogger(__name__)
 TOKEN = os.environ.get("BOT_TOKEN", "")
 CHAT_ID = os.environ.get("CHAT_ID", "")
 PORT = int(os.environ.get("PORT", 8080))
+SELF_URL = os.environ.get("SELF_URL", "")  # https://botturnosgosseal-machachi.onrender.com
 TZ = pytz.timezone("America/Guayaquil")
 DATA_FILE = "data.json"
 
@@ -32,6 +35,20 @@ BASE_MEMBERS = [
 ]
 
 WEEK_ZERO = datetime(2026, 6, 13, tzinfo=TZ)
+
+
+# ── Auto-ping para no dormirse ─────────────────────────────────────────────────
+def keep_alive():
+    if not SELF_URL:
+        logger.warning("SELF_URL no configurado, el bot puede dormirse en Render Free.")
+        return
+    while True:
+        time.sleep(840)  # cada 14 minutos
+        try:
+            urllib.request.urlopen(SELF_URL, timeout=10)
+            logger.info("Auto-ping OK → %s", SELF_URL)
+        except Exception as e:
+            logger.warning("Auto-ping falló: %s", e)
 
 
 # ── Servidor HTTP mínimo ───────────────────────────────────────────────────────
@@ -92,7 +109,7 @@ def build_reminder(week: int, data: dict) -> str:
     turno_str = "\n".join(f"  ✅ {m}" for m in sched["on_duty"]) or "  (sin asignar)"
     libre_str = "\n".join(f"  🟡 {m}" for m in sched["free"]) or "  (ninguno)"
     return (
-        f"🔔 *RECORDATORIO DE TURNO — Semana \#{week}*\n"
+        f"🔔 *RECORDATORIO DE TURNO — Semana #{week}*\n"
         f"📅 *Sábado {sat.strftime('%d/%m/%Y')} y Domingo {sun.strftime('%d/%m/%Y')}*\n\n"
         f"*🔧 DE TURNO:*\n{turno_str}\n\n"
         f"*🟡 LIBRE este fin de semana:*\n{libre_str}\n\n"
@@ -144,7 +161,7 @@ async def cmd_calendario(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         sun = sat + timedelta(days=1)
         hoy = " ← *ESTE FIN DE SEMANA*" if i == 0 else ""
         lines.append(
-            f"*Sem \#{w}* — Sáb {sat.strftime('%d/%m')} / Dom {sun.strftime('%d/%m')}{hoy}\n"
+            f"*Sem #{w}* — Sáb {sat.strftime('%d/%m')} / Dom {sun.strftime('%d/%m')}{hoy}\n"
             f"  🔧 {', '.join(sched['on_duty']) or 'sin asignar'}\n"
             f"  🟡 Libre: {', '.join(sched['free']) or 'ninguno'}"
         )
@@ -201,6 +218,7 @@ async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
         text=build_reminder(get_week_number(), data),
         parse_mode="Markdown"
     )
+    logger.info("Recordatorio enviado — semana #%s", get_week_number())
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -208,27 +226,9 @@ def main():
     if not TOKEN:
         raise ValueError("Falta BOT_TOKEN en variables de entorno")
 
-    # HTTP server en hilo separado
+    # Servidor HTTP
     threading.Thread(target=run_http_server, daemon=True).start()
 
-    # Bot con su propio event loop interno (forma correcta para PTB 21+)
-    app = Application.builder().token(TOKEN).build()
+    # Auto-ping para no dormirse
+    threading.Thread(target=keep_alive, daemon=True).start()
 
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("turno", cmd_turno))
-    app.add_handler(CommandHandler("siguiente", cmd_siguiente))
-    app.add_handler(CommandHandler("calendario", cmd_calendario))
-    app.add_handler(CommandHandler("estado", cmd_estado))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
-    jq = app.job_queue
-    for hour in [8, 13, 19]:
-        t = datetime.now(TZ).replace(hour=hour, minute=0, second=0, microsecond=0).timetz()
-        jq.run_daily(send_reminder, time=t, days=(4,), name=f"reminder_{hour}h")
-
-    logger.info("Bot corriendo...")
-    app.run_polling(drop_pending_updates=True)
-
-
-if __name__ == "__main__":
-    main()
