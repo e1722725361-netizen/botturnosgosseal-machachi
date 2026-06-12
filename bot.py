@@ -232,3 +232,30 @@ def main():
     # Auto-ping para no dormirse
     threading.Thread(target=keep_alive, daemon=True).start()
 
+    # Construir la aplicación de Telegram
+    app = Application.builder().token(TOKEN).build()
+
+    # Registrar handlers de comandos
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("turno", cmd_turno))
+    app.add_handler(CommandHandler("siguiente", cmd_siguiente))
+    app.add_handler(CommandHandler("calendario", cmd_calendario))
+    app.add_handler(CommandHandler("estado", cmd_estado))
+
+    # Handler para mensajes de texto (detección de "suspéndeme")
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # Job semanal: enviar recordatorio cada viernes a las 18:00 (hora Guayaquil)
+    app.job_queue.run_daily(
+        send_reminder,
+        time=datetime.strptime("18:00", "%H:%M").time().replace(tzinfo=TZ),
+        days=(4,),  # 0=lunes ... 4=viernes
+        name="recordatorio_semanal"
+    )
+
+    logger.info("Bot iniciado, escuchando...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+if __name__ == "__main__":
+    main()
