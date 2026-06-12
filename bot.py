@@ -167,6 +167,9 @@ async def cmd_calendario(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
     await update.message.reply_text("\n\n".join(lines), parse_mode="Markdown")
 
+async def cmd_chatid(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"🆔 ID de este chat: `{update.effective_chat.id}`", parse_mode="Markdown")
+
 async def cmd_estado(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = load_data()
     now = datetime.now(TZ)
@@ -241,6 +244,7 @@ def main():
     app.add_handler(CommandHandler("siguiente", cmd_siguiente))
     app.add_handler(CommandHandler("calendario", cmd_calendario))
     app.add_handler(CommandHandler("estado", cmd_estado))
+    app.add_handler(CommandHandler("chatid", cmd_chatid))
 
     # Handler para mensajes de texto (detección de "suspéndeme")
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
