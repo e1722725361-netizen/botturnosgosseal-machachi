@@ -126,9 +126,26 @@ def find_member(user) -> str | None:
     return None
 
 
+# ── Envío seguro (con fallback a texto plano si falla el Markdown) ────────────
+async def safe_reply(message, text: str):
+    try:
+        await message.reply_text(text, parse_mode="Markdown")
+    except Exception as e:
+        logger.warning("Fallo Markdown en reply_text, reintentando sin formato: %s", e)
+        await message.reply_text(text)
+
+async def safe_send(bot, chat_id, text: str):
+    try:
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+    except Exception as e:
+        logger.warning("Fallo Markdown en send_message, reintentando sin formato: %s", e)
+        await bot.send_message(chat_id=chat_id, text=text)
+
+
 # ── Handlers ──────────────────────────────────────────────────────────────────
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
+    await safe_reply(
+        update.message,
         "👋 *Bot de Turnos — Gosseal Machachi*\n\n"
         "*Comandos:*\n"
         "• /turno — Turno de este fin de semana\n"
@@ -140,17 +157,16 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "*Para suspenderte escribe:*\n"
         "`suspéndeme 7 días` → fuera 8 días\n"
         "`suspéndeme 15 días` → fuera 16 días\n\n"
-        "El sistema te reincorpora automáticamente 🔄",
-        parse_mode="Markdown"
+        "El sistema te reincorpora automáticamente 🔄"
     )
 
 async def cmd_turno(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = load_data()
-    await update.message.reply_text(build_reminder(get_week_number(), data), parse_mode="Markdown")
+    await safe_reply(update.message, build_reminder(get_week_number(), data))
 
 async def cmd_siguiente(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = load_data()
-    await update.message.reply_text(build_reminder(get_week_number() + 1, data), parse_mode="Markdown")
+    await safe_reply(update.message, build_reminder(get_week_number() + 1, data))
 
 async def cmd_calendario(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = load_data()
@@ -167,10 +183,10 @@ async def cmd_calendario(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"  🔧 {', '.join(sched['on_duty']) or 'sin asignar'}\n"
             f"  🟡 Libre: {', '.join(sched['free']) or 'ninguno'}"
         )
-    await update.message.reply_text("\n\n".join(lines), parse_mode="Markdown")
+    await safe_reply(update.message, "\n\n".join(lines))
 
 async def cmd_chatid(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"🆔 ID de este chat: `{update.effective_chat.id}`", parse_mode="Markdown")
+    await safe_reply(update.message, f"🆔 ID de este chat: `{update.effective_chat.id}`")
 
 async def cmd_test(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not CHAT_ID:
@@ -178,14 +194,10 @@ async def cmd_test(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     data = load_data()
     try:
-        await ctx.bot.send_message(
-            chat_id=CHAT_ID,
-            text=build_reminder(get_week_number(), data),
-            parse_mode="Markdown"
-        )
-        await update.message.reply_text(f"✅ Enviado correctamente a CHAT_ID: `{CHAT_ID}`", parse_mode="Markdown")
+        await safe_send(ctx.bot, CHAT_ID, build_reminder(get_week_number(), data))
+        await update.message.reply_text(f"✅ Enviado correctamente a CHAT_ID: {CHAT_ID}")
     except Exception as e:
-        await update.message.reply_text(f"❌ Error al enviar a CHAT_ID `{CHAT_ID}`:\n`{e}`", parse_mode="Markdown")
+        await update.message.reply_text(f"❌ Error al enviar a CHAT_ID {CHAT_ID}:\n{e}")
 
 async def cmd_estado(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = load_data()
@@ -200,7 +212,7 @@ async def cmd_estado(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         retorno = datetime.fromisoformat(iso)
         dias = (retorno - now).days + 1
         lines.append(f"  • *{key.replace('_', ' ')}*\n    Regresa: {retorno.strftime('%d/%m/%Y')} (en {dias} día/s)")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await safe_reply(update.message, "\n".join(lines))
 
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.lower().strip()
@@ -209,9 +221,9 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     match = re.search(r"\b(7|15)\b", text)
     if not match:
-        await update.message.reply_text(
-            "⚠️ Escribe:\n`suspéndeme 7 días` o `suspéndeme 15 días`",
-            parse_mode="Markdown"
+        await safe_reply(
+            update.message,
+            "⚠️ Escribe:\n`suspéndeme 7 días` o `suspéndeme 15 días`"
         )
         return
     dias_fuera = int(match.group(1)) + 1
@@ -223,21 +235,17 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     retorno = datetime.now(TZ) + timedelta(days=dias_fuera)
     data["vacations"][member.replace(" ", "_")] = retorno.isoformat()
     save_data(data)
-    await update.message.reply_text(
+    await safe_reply(
+        update.message,
         f"✅ *{member}* quedas suspendido por *{dias_fuera} días*.\n"
-        f"📅 Te reincorporas el *{retorno.strftime('%d/%m/%Y')}*. ¡Descansa! 🏖",
-        parse_mode="Markdown"
+        f"📅 Te reincorporas el *{retorno.strftime('%d/%m/%Y')}*. ¡Descansa! 🏖"
     )
 
 async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
     if not CHAT_ID:
         return
     data = load_data()
-    await context.bot.send_message(
-        chat_id=CHAT_ID,
-        text=build_reminder(get_week_number(), data),
-        parse_mode="Markdown"
-    )
+    await safe_send(context.bot, CHAT_ID, build_reminder(get_week_number(), data))
     logger.info("Recordatorio enviado — semana #%s", get_week_number())
 
 
