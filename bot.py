@@ -4,8 +4,8 @@ import logging
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from datetime import datetime, timedelta
-import pytz
+from datetime import datetime, timedelta, time as dtime
+from zoneinfo import ZoneInfo
 import re
 import urllib.request
 from telegram import Update
@@ -24,7 +24,7 @@ TOKEN = os.environ.get("BOT_TOKEN", "")
 CHAT_ID = os.environ.get("CHAT_ID", "")
 PORT = int(os.environ.get("PORT", 8080))
 SELF_URL = os.environ.get("SELF_URL", "")  # https://botturnosgosseal-machachi.onrender.com
-TZ = pytz.timezone("America/Guayaquil")
+TZ = ZoneInfo("America/Guayaquil")
 DATA_FILE = "data.json"
 
 BASE_MEMBERS = [
@@ -134,7 +134,9 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "• /turno — Turno de este fin de semana\n"
         "• /siguiente — Turno del próximo fin de semana\n"
         "• /calendario — Próximas 8 semanas\n"
-        "• /estado — Ver quién está suspendido\n\n"
+        "• /estado — Ver quién está suspendido\n"
+        "• /chatid — Ver el ID de este chat\n"
+        "• /test — Probar el envío del recordatorio ahora\n\n"
         "*Para suspenderte escribe:*\n"
         "`suspéndeme 7 días` → fuera 8 días\n"
         "`suspéndeme 15 días` → fuera 16 días\n\n"
@@ -169,6 +171,21 @@ async def cmd_calendario(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_chatid(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🆔 ID de este chat: `{update.effective_chat.id}`", parse_mode="Markdown")
+
+async def cmd_test(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not CHAT_ID:
+        await update.message.reply_text("⚠️ CHAT_ID no está configurado en las variables de entorno.")
+        return
+    data = load_data()
+    try:
+        await ctx.bot.send_message(
+            chat_id=CHAT_ID,
+            text=build_reminder(get_week_number(), data),
+            parse_mode="Markdown"
+        )
+        await update.message.reply_text(f"✅ Enviado correctamente a CHAT_ID: `{CHAT_ID}`", parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al enviar a CHAT_ID `{CHAT_ID}`:\n`{e}`", parse_mode="Markdown")
 
 async def cmd_estado(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = load_data()
@@ -245,21 +262,27 @@ def main():
     app.add_handler(CommandHandler("calendario", cmd_calendario))
     app.add_handler(CommandHandler("estado", cmd_estado))
     app.add_handler(CommandHandler("chatid", cmd_chatid))
+    app.add_handler(CommandHandler("test", cmd_test))
 
     # Handler para mensajes de texto (detección de "suspéndeme")
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     # Jobs semanales: enviar recordatorio cada viernes 3 veces (9am, 12pm, 6pm) hora Guayaquil
-    horarios_viernes = ["09:00", "12:00", "18:00"]
-    for i, hora in enumerate(horarios_viernes):
+    horarios_viernes = [(9, 0), (12, 0), (18, 0)]
+    for i, (h, m) in enumerate(horarios_viernes):
         app.job_queue.run_daily(
             send_reminder,
-            time=datetime.strptime(hora, "%H:%M").time().replace(tzinfo=TZ),
+            time=dtime(hour=h, minute=m, tzinfo=TZ),
             days=(4,),  # 0=lunes ... 4=viernes
             name=f"recordatorio_viernes_{i}"
         )
 
     logger.info("Bot iniciado, escuchando...")
+    try:
+        for job in app.job_queue.jobs():
+            logger.info("Job '%s' -> próxima ejecución: %s", job.name, job.next_t)
+    except Exception as e:
+        logger.warning("No se pudo leer next_t de los jobs: %s", e)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
