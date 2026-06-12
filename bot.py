@@ -245,13 +245,15 @@ def main():
     # Handler para mensajes de texto (detección de "suspéndeme")
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    # Job semanal: enviar recordatorio cada viernes a las 18:00 (hora Guayaquil)
-    app.job_queue.run_daily(
-        send_reminder,
-        time=datetime.strptime("18:00", "%H:%M").time().replace(tzinfo=TZ),
-        days=(4,),  # 0=lunes ... 4=viernes
-        name="recordatorio_semanal"
-    )
+    # Jobs semanales: enviar recordatorio cada viernes 3 veces (9am, 12pm, 6pm) hora Guayaquil
+    horarios_viernes = ["09:00", "12:00", "18:00"]
+    for i, hora in enumerate(horarios_viernes):
+        app.job_queue.run_daily(
+            send_reminder,
+            time=datetime.strptime(hora, "%H:%M").time().replace(tzinfo=TZ),
+            days=(4,),  # 0=lunes ... 4=viernes
+            name=f"recordatorio_viernes_{i}"
+        )
 
     logger.info("Bot iniciado, escuchando...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
